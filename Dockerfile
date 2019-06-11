@@ -6,7 +6,7 @@ RUN apt-get -y update && apt-get -y upgrade
 RUN apt-get install -y  tzdata 
 RUN echo "Ireland/Dublin" >> /etc/timezone
 RUN dpkg-reconfigure --frontend noninteractive tzdata
-RUN apt-get install -y bash git libatlas-base-dev liblapack-dev libblas-dev python-pip git-lfs
+RUN apt-get install -y bash git libatlas-base-dev liblapack-dev libblas-dev python-pip git-lfs jupyter-notebook python-ipykernel
 RUN apt -y build-dep caffe-cpu
 RUN pip install numpy scipy pandas lmdb protobuf scikit-image
 CMD ["/bin/bash"]
