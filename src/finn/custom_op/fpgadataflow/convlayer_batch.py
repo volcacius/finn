@@ -32,12 +32,18 @@ class ConvLayer_Batch(HLSCustomOp):
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 
-    def calc_wmem(self):
+    def calc_mw(self):
         k = self.get_nodeattr("ConvKernelDim")
         ifm_ch = self.get_nodeattr("IFMChannels")
+        return k * k * ifm_ch
+
+    def calc_mh(self):
         ofm_ch = self.get_nodeattr("OFMChannels")
-        mw = k * k * ifm_ch
-        mh = ofm_ch
+        return ofm_ch
+
+    def calc_wmem(self):
+        mw = self.calc_mw
+        mh = self.calc_mh
         pe = self.get_nodeattr("PE")
         simd = self.get_nodeattr("SIMD")
         assert mh % pe == 0
@@ -50,8 +56,7 @@ class ConvLayer_Batch(HLSCustomOp):
         if self.get_nodeattr("noActivation") == 1:
             return 0
         else:
-            ofm_ch = self.get_nodeattr("OFMChannels")
-            mh = ofm_ch
+            mh = self.calc_mh
             pe = self.get_nodeattr("PE")
             return mh // pe
 
@@ -121,13 +126,153 @@ class ConvLayer_Batch(HLSCustomOp):
         return ret
 
     def get_hls_compatible_weight_tensor(self, orig_weight_matrix):
-        pass
+       """Convert the original numpy weight matrix orig_weight_matrix into
+        a form suitable for passing to the hlslib call:
+        * ensure MH % PE == 0 and MW % SIMD == 0
+        * for bipolar {-1,+1} weights, convert to binary {0, 1}
+        * interleave rows between PEs
+        * reshape into (1, PE, WMEM, SIMD) and return
+        """
+        mw = self.calc_mw
+        mh = self.calc_mh
+        pe = self.get_nodeattr("PE")
+        simd = self.get_nodeattr("SIMD")
+        wmem = self.calc_wmem()
+        assert orig_weight_matrix.shape == (mw, mh)
+        assert mw % simd == 0
+        assert mh % pe == 0
+        # start by transposing the original weight matrix, since ONNX and
+        # finn-hlslib use different assumptions
+        # ONNX uses (in_features, out_features) and matmul(x, W)
+        # finn-hlslib uses (out_features, in_features) and matmul(W, x)
+        ret = orig_weight_matrix.T
+        if self.get_weight_datatype() == DataType.BIPOLAR:
+            # convert bipolar to binary
+            ret = (ret + 1) / 2
+        # interleave rows between PEs and reshape
+        # distribute rows between PEs
+        ret = interleave_matrix_outer_dim_from_partitions(ret, pe)
+        # create SIMD as innermost dimension and add a dummy outer dim
+        ret = ret.reshape(1, pe, wmem, simd)
+        return ret
+ 
 
     def get_hls_compatible_threshold_tensor(self, orig_thres_matrix):
-        pass 
+        """Convert the original numpy weight matrix orig_weight_matrix into
+        a form suitable for passing to the hlslib call:
+        * ensure MH % PE == 0
+        * for bipolar weights&inputs, ensure thresholds are positive
+        * interleave rows between PEs
+        * reshape into (PE, TMEM, n_thres_steps) and return
+        """
+        mh = self.calc_mh
+        pe = self.get_nodeattr("PE")
+        tmem = mh // pe
+        assert mh % pe == 0
+        assert orig_thres_matrix.ndim == 2
+        n_thres_steps = orig_thres_matrix.shape[1]
+        inp_is_bipolar = self.get_input_datatype() == DataType.BIPOLAR
+        wt_is_bipolar = self.get_weight_datatype() == DataType.BIPOLAR
+        # reinterpret inp/wt as bipolar if bin_xnor_mode is iset
+        inp_is_binary = self.get_input_datatype() == DataType.BINARY
+        wt_is_binary = self.get_weight_datatype() == DataType.BINARY
+        bin_xnor_mode = self.get_nodeattr("binaryXnorMode") == 1
+        inp_is_bipolar = inp_is_bipolar or (inp_is_binary and bin_xnor_mode)
+        wt_is_bipolar = wt_is_bipolar or (wt_is_binary and bin_xnor_mode)
+        if inp_is_bipolar and wt_is_bipolar:
+            # ensure all thresholds are nonnegative
+            assert (orig_thres_matrix >= 0).all()
+            # ensure all thresholds are integer
+            assert (orig_thres_matrix.astype(np.int32) == orig_thres_matrix).all()
+        ret = orig_thres_matrix
+        # ensure channels = mh , duplicating if necessary
+        if ret.shape[0] == 1:
+            ret = np.tile(ret, (mh, 1))
+        assert ret.shape[0] == mh
+        # distribute rows between PEs
+        ret = interleave_matrix_outer_dim_from_partitions(ret, pe)
+        assert ret.shape[0] == pe
+        assert ret.shape[1] == tmem
+        assert ret.shape[2] == n_thres_steps
+        return ret.reshape(1, pe, tmem, n_thres_steps)
+ 
     
     def generate_params(self, model):
-        pass
+        # weights
+        weights = model.get_initializer(self.onnx_node.input[1])
+        # convert weights into hlslib-compatible format
+        weight_tensor = self.get_hls_compatible_weight_tensor(weights)
+        export_wdt = self.get_weight_datatype()
+        # we have converted bipolar weights to binary for export,
+        # so use it as such for weight generation
+        if self.get_weight_datatype() == DataType.BIPOLAR:
+            export_wdt = DataType.BINARY
+        weight_hls_code = numpy_to_hls_code(
+            weight_tensor, export_wdt, "weights", True, True
+        )
+        # write weights into params.h
+        code_gen_dir = self.get_nodeattr("code_gen_dir")
+        f_weights = open("{}/params.h".format(code_gen_dir), "w")
+
+        if export_wdt.bitwidth() != 1:
+            f_weights.write(
+                "static FixedPointWeights<{},{},{},{}> weights = ".format(
+                    self.get_nodeattr("SIMD"),
+                    export_wdt.get_hls_datatype_str(),
+                    self.get_nodeattr("PE"),
+                    self.calc_wmem(),
+                )
+            )
+        else:
+            f_weights.write(
+                "static BinaryWeights<{},{},{}> weights = ".format(
+                    self.get_nodeattr("SIMD"), self.get_nodeattr("PE"), self.calc_wmem()
+                )
+            )
+        f_weights.write(weight_hls_code)
+        f_weights.close()
+        # thresholds
+        if len(self.onnx_node.input) > 2:
+            thresholds = model.get_initializer(self.onnx_node.input[2])
+            if thresholds is not None:
+                threshold_tensor = self.get_hls_compatible_threshold_tensor(thresholds)
+                tdt = DataType.INT32
+                # use UINT32 threshold export for bipolar times bipolar
+                inp_is_bipolar = self.get_input_datatype() == DataType.BIPOLAR
+                wt_is_bipolar = self.get_weight_datatype() == DataType.BIPOLAR
+                # reinterpret inp/wt as bipolar if bin_xnor_mode is iset
+                inp_is_binary = self.get_input_datatype() == DataType.BINARY
+                wt_is_binary = self.get_weight_datatype() == DataType.BINARY
+                bin_xnor_mode = self.get_nodeattr("binaryXnorMode") == 1
+                inp_is_bipolar = inp_is_bipolar or (inp_is_binary and bin_xnor_mode)
+                wt_is_bipolar = wt_is_bipolar or (wt_is_binary and bin_xnor_mode)
+                if inp_is_bipolar and wt_is_bipolar:
+                    tdt = DataType.UINT32
+                thresholds_hls_code = numpy_to_hls_code(
+                    threshold_tensor, tdt, "thresholds", False, True
+                )
+                # write thresholds into thresh.h
+                code_gen_dir = self.get_nodeattr("code_gen_dir")
+                f_thresh = open("{}/thresh.h".format(code_gen_dir), "w")
+                tdt_hls = tdt.get_hls_datatype_str()
+                # use binary to export bipolar activations
+                export_odt = self.get_output_datatype()
+                if self.get_output_datatype() == DataType.BIPOLAR:
+                    export_odt = DataType.BINARY
+                odt_hls = export_odt.get_hls_datatype_str()
+                f_thresh.write(
+                    "static ThresholdsActivation<{},{},{},{},{},{}> threshs \
+                     = ".format(
+                        self.calc_tmem(),
+                        self.get_nodeattr("PE"),
+                        threshold_tensor.shape[-1],
+                        tdt_hls,
+                        odt_hls,
+                        "std::less_equal<%s>" % tdt_hls,
+                    )
+                )
+                f_thresh.write(thresholds_hls_code)
+                f_thresh.close()
 
     def execute_node(self, context, graph):
 
