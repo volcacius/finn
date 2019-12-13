@@ -22,7 +22,7 @@ class ConvLayer_Batch(HLSCustomOp):
             "SIMD": ("i", True, 0),
             "PE": ("i", True, 0),
             "resType": ("s", True, ""),
-            "ActVal": ("s", False, 0),
+            "ActVal": ("i", False, 0),
             # FINN DataTypes for inputs, weights, outputs
             "inputDataType": ("s", True, ""),
             "weightDataType": ("s", True, ""),
@@ -257,14 +257,16 @@ class ConvLayer_Batch(HLSCustomOp):
                 if self.get_output_datatype() == DataType.BIPOLAR:
                     export_odt = DataType.BINARY
                 odt_hls = export_odt.get_hls_datatype_str()
+                import pdb; pdb.set_trace()
                 f_thresh.write(
-                    "static ThresholdsActivation<{},{},{},{},{},{}> threshs \
+                    "static ThresholdsActivation<{},{},{},{},{},{},{}> threshs \
                      = ".format(
                         self.calc_tmem(),
                         self.get_nodeattr("PE"),
                         threshold_tensor.shape[-1],
                         tdt_hls,
                         odt_hls,
+                        self.get_nodeattr("ActVal"),
                         "std::less_equal<%s>" % tdt_hls,
                     )
                 )
