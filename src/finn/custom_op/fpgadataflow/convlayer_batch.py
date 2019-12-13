@@ -52,7 +52,6 @@ class ConvLayer_Batch(HLSCustomOp):
         wmem = mw * mh // (pe * simd)
         return wmem
 
-
     def calc_tmem(self):
         if self.get_nodeattr("noActivation") == 1:
             return 0
@@ -60,7 +59,6 @@ class ConvLayer_Batch(HLSCustomOp):
             mh = self.calc_mh()
             pe = self.get_nodeattr("PE")
             return mh // pe
-
 
     def make_shape_compatible_op(self):
         pass
@@ -156,7 +154,6 @@ class ConvLayer_Batch(HLSCustomOp):
         # create SIMD as innermost dimension and add a dummy outer dim
         ret = ret.reshape(1, pe, wmem, simd)
         return ret
- 
 
     def get_hls_compatible_threshold_tensor(self, orig_thres_matrix):
         """Convert the original numpy weight matrix orig_weight_matrix into
@@ -196,8 +193,7 @@ class ConvLayer_Batch(HLSCustomOp):
         assert ret.shape[1] == tmem
         assert ret.shape[2] == n_thres_steps
         return ret.reshape(1, pe, tmem, n_thres_steps)
- 
-    
+
     def generate_params(self, model):
         # weights
         weights = model.get_initializer(self.onnx_node.input[1])
@@ -279,12 +275,12 @@ class ConvLayer_Batch(HLSCustomOp):
         node = self.onnx_node
         ifm_dim = self.get_nodeattr("IFMDIM")
         ifm_ch = self.get_nodeattr("IFMChannels")
-        ofm_dim = self.get_nodeattr("OFMDIM")
+        # ofm_dim = self.get_nodeattr("OFMDIM")
         ofm_ch = self.get_nodeattr("OFMChannels")
         simd = self.get_nodeattr("SIMD")
         pe = self.get_nodeattr("PE")
-        sf = if_dim // simd
-        nf = of_ch // pe
+        sf = ifm_dim // simd
+        nf = ofm_ch // pe
 
         # TODO ensure codegen dir exists
         code_gen_dir = self.get_nodeattr("code_gen_dir")
@@ -366,7 +362,7 @@ class ConvLayer_Batch(HLSCustomOp):
         self.code_gen_dict["$READNPYDATA$"].append(
             'npy2apintstream<%s, %s, %d, %s>("%s", in0);'
             % (packed_hls_type, elem_hls_type, elem_bits, npy_type, npy_in)
-        ) 
+        )
 
     def strm_decl(self):
         self.code_gen_dict["$STREAMDECLARATIONS$"] = []
@@ -385,9 +381,9 @@ class ConvLayer_Batch(HLSCustomOp):
             threshs = "PassThroughActivation<%s>()" % odtype_hls_str
         else:
             threshs = "threshs"
-        
+
         self.code_gen_dict["$DOCOMPUTE$"] = [
-            """{}<ConvKernelDim1, IFMChannels1, IFMDim1, OFMChannels1, 
+            """{}<ConvKernelDim1, IFMChannels1, IFMDim1, OFMChannels1,
             OFMDim1, SIMD1, PE1, {}, {}, {}>
             (in0, out, weights, {}, numReps, {});""".format(
                 node.op_type,
@@ -398,7 +394,6 @@ class ConvLayer_Batch(HLSCustomOp):
                 self.get_nodeattr("resType"),
             )
         ]
-
 
     def dataoutstrm(self):
         code_gen_dir = self.get_nodeattr("code_gen_dir")
@@ -427,7 +422,6 @@ class ConvLayer_Batch(HLSCustomOp):
                 npy_out,
             )
         ]
-
 
     def save_as_npy(self):
         self.code_gen_dict["$SAVEASCNPY$"] = []
