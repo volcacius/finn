@@ -5,6 +5,7 @@ from finn.core.datatype import DataType
 from finn.core.modelwrapper import ModelWrapper
 from finn.core.utils import calculate_signed_dot_prod_range, gen_finn_dt_tensor
 from finn.transformation.fpgadataflow.codegen import CodeGen
+from finn.transformation.fpgadataflow.compile import Compile
 
 
 def make_single_fclayer_modelwrapper(
@@ -125,3 +126,4 @@ def test_fpgadataflow_convlayer():
     )
 
     model = model.transform(CodeGen())
+    model = model.transform(Compile())
