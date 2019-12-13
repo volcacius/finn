@@ -2,9 +2,9 @@ import os
 
 import numpy as np
 
-# from finn.backend.fpgadataflow.utils import numpy_to_hls_code
+from finn.backend.fpgadataflow.utils import numpy_to_hls_code
 from finn.core.datatype import DataType
-# from finn.core.utils import interleave_matrix_outer_dim_from_partitions
+from finn.core.utils import interleave_matrix_outer_dim_from_partitions
 from finn.custom_op.fpgadataflow import HLSCustomOp
 
 
@@ -22,6 +22,7 @@ class ConvLayer_Batch(HLSCustomOp):
             "SIMD": ("i", True, 0),
             "PE": ("i", True, 0),
             "resType": ("s", True, ""),
+            "ActVal": ("s", False, 0),
             # FINN DataTypes for inputs, weights, outputs
             "inputDataType": ("s", True, ""),
             "weightDataType": ("s", True, ""),
@@ -42,8 +43,8 @@ class ConvLayer_Batch(HLSCustomOp):
         return ofm_ch
 
     def calc_wmem(self):
-        mw = self.calc_mw
-        mh = self.calc_mh
+        mw = self.calc_mw()
+        mh = self.calc_mh()
         pe = self.get_nodeattr("PE")
         simd = self.get_nodeattr("SIMD")
         assert mh % pe == 0
@@ -56,7 +57,7 @@ class ConvLayer_Batch(HLSCustomOp):
         if self.get_nodeattr("noActivation") == 1:
             return 0
         else:
-            mh = self.calc_mh
+            mh = self.calc_mh()
             pe = self.get_nodeattr("PE")
             return mh // pe
 
@@ -126,15 +127,15 @@ class ConvLayer_Batch(HLSCustomOp):
         return ret
 
     def get_hls_compatible_weight_tensor(self, orig_weight_matrix):
-       """Convert the original numpy weight matrix orig_weight_matrix into
+        """Convert the original numpy weight matrix orig_weight_matrix into
         a form suitable for passing to the hlslib call:
-        * ensure MH % PE == 0 and MW % SIMD == 0
-        * for bipolar {-1,+1} weights, convert to binary {0, 1}
-        * interleave rows between PEs
-        * reshape into (1, PE, WMEM, SIMD) and return
-        """
-        mw = self.calc_mw
-        mh = self.calc_mh
+        -ensure MH % PE == 0 and MW % SIMD == 0
+        -for bipolar {-1,+1} weights, convert to binary {0, 1}
+        -interleave rows between PEs
+        -reshape into (1, PE, WMEM, SIMD) and return"""
+
+        mw = self.calc_mw()
+        mh = self.calc_mh()
         pe = self.get_nodeattr("PE")
         simd = self.get_nodeattr("SIMD")
         wmem = self.calc_wmem()
@@ -165,7 +166,7 @@ class ConvLayer_Batch(HLSCustomOp):
         * interleave rows between PEs
         * reshape into (PE, TMEM, n_thres_steps) and return
         """
-        mh = self.calc_mh
+        mh = self.calc_mh()
         pe = self.get_nodeattr("PE")
         tmem = mh // pe
         assert mh % pe == 0
@@ -275,6 +276,53 @@ class ConvLayer_Batch(HLSCustomOp):
                 f_thresh.close()
 
     def execute_node(self, context, graph):
+        node = self.onnx_node
+        ifm_dim = self.get_nodeattr("IFMDIM")
+        ifm_ch = self.get_nodeattr("IFMChannels")
+        ofm_dim = self.get_nodeattr("OFMDIM")
+        ofm_ch = self.get_nodeattr("OFMChannels")
+        simd = self.get_nodeattr("SIMD")
+        pe = self.get_nodeattr("PE")
+        sf = if_dim // simd
+        nf = of_ch // pe
+
+        # TODO ensure codegen dir exists
+        code_gen_dir = self.get_nodeattr("code_gen_dir")
+        # create a npy file fore each input of the node (in_ind is input index)
+        in_ind = 0
+        for inputs in node.input:
+            # it is assumed that the first input of the node is the data input
+            # the second input are the weights
+            # the third input are the thresholds
+            if in_ind == 0:
+                assert str(context[inputs].dtype) == "float32"
+                expected_inp_shape = (ifm_ch, sf, simd)
+                reshaped_input = context[inputs].reshape(expected_inp_shape)
+                # flip SIMD (innermost) dimension of input tensor, there's some reversal
+                # going on somewhere with a mistmatch between npy and hls...
+                reshaped_input = np.flip(reshaped_input, -1)
+                if self.get_input_datatype() == DataType.BIPOLAR:
+                    # store bipolar activations as binary
+                    reshaped_input = (reshaped_input + 1) / 2
+                np.save(
+                    os.path.join(code_gen_dir, "input_{}.npy".format(in_ind)),
+                    reshaped_input,
+                )
+            elif in_ind > 2:
+                raise Exception("Unexpected input found for StreamingFCLayer")
+            in_ind += 1
+        # execute the precompiled model
+        super().exec_precompiled_singlenode_model()
+        # load output npy file
+        super().npy_to_dynamic_output(context)
+        # reinterpret binary output as bipolar where needed
+        if self.get_output_datatype() == DataType.BIPOLAR:
+            out = context[node.output[0]]
+            out = 2 * out - 1
+            context[node.output[0]] = out
+        assert context[node.output[0]].shape == (ofm_ch, nf, pe)
+        # reshape output to have expected shape
+        context[node.output[0]] = context[node.output[0]].reshape(ofm_ch, ofm_ch)
 
     def global_includes(self):
         self.code_gen_dict["$GLOBALS$"] = ['#include "weights.hpp"']
@@ -364,7 +412,7 @@ class ConvLayer_Batch(HLSCustomOp):
         elem_hls_type = dtype.get_hls_datatype_str()
         npy_type = "float"
         npy_out = "%s/output.npy" % code_gen_dir
-        nf = int(self.get_nodeattr("MH") / self.get_nodeattr("PE"))
+        nf = int(self.get_nodeattr("OFMChannels") / self.get_nodeattr("PE"))
         shape = (1, nf, self.get_nodeattr("PE"))
         shape_cpp_str = str(shape).replace("(", "{").replace(")", "}")
 
