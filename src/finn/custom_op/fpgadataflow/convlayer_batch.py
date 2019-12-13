@@ -257,7 +257,6 @@ class ConvLayer_Batch(HLSCustomOp):
                 if self.get_output_datatype() == DataType.BIPOLAR:
                     export_odt = DataType.BINARY
                 odt_hls = export_odt.get_hls_datatype_str()
-                import pdb; pdb.set_trace()
                 f_thresh.write(
                     "static ThresholdsActivation<{},{},{},{},{},{},{}> threshs \
                      = ".format(
@@ -327,6 +326,8 @@ class ConvLayer_Batch(HLSCustomOp):
         self.code_gen_dict["$GLOBALS$"] += ['#include "activations.hpp"']
         self.code_gen_dict["$GLOBALS$"] += ['#include "params.h"']
         self.code_gen_dict["$GLOBALS$"] += ['#include "thresh.h"']
+        self.code_gen_dict["$GLOBALS$"] += ['#include "mvau.hpp"']
+        self.code_gen_dict["$GLOBALS$"] += ['#include "interpret.hpp"']
 
     def defines(self):
         numReps = 1
