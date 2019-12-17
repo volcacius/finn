@@ -134,17 +134,26 @@ class ConvLayer_Batch(HLSCustomOp):
 
         mw = self.calc_mw()
         mh = self.calc_mh()
+        ofm_ch = self.get_nodeattr("OFMChannels")
+        ifm_ch = self.get_nodeattr("IFMChannels")
+        k = self.get_nodeattr("ConvKernelDim")
         pe = self.get_nodeattr("PE")
         simd = self.get_nodeattr("SIMD")
         wmem = self.calc_wmem()
-        assert orig_weight_matrix.shape == (mw, mh)
+        assert orig_weight_matrix.shape == (ofm_ch, ifm_ch, k, k)
         assert mw % simd == 0
         assert mh % pe == 0
         # start by transposing the original weight matrix, since ONNX and
         # finn-hlslib use different assumptions
         # ONNX uses (in_features, out_features) and matmul(x, W)
         # finn-hlslib uses (out_features, in_features) and matmul(W, x)
-        ret = orig_weight_matrix.T
+        # first we need to convert the weight matrix into the format (mh, mw)
+        # because mh = ofm_ch and mw = k * k * ifm_ch
+        # the matrix will first be transposed
+        ret = orig_weight_matrix.transpose(0, 2, 3, 1)
+        # now it has the shape (ofm_ch, k, k, ifm_ch) and it can be reshaped
+        # into (mh, mw)
+        ret = ret.reshape(mh, mw)
         if self.get_weight_datatype() == DataType.BIPOLAR:
             # convert bipolar to binary
             ret = (ret + 1) / 2
@@ -197,6 +206,8 @@ class ConvLayer_Batch(HLSCustomOp):
     def generate_params(self, model):
         # weights
         weights = model.get_initializer(self.onnx_node.input[1])
+        # weights are expected to have the shape (ofm_ch, ifm_ch, k, k)
+        # with k : ConvKernelDim
         # convert weights into hlslib-compatible format
         weight_tensor = self.get_hls_compatible_weight_tensor(weights)
         export_wdt = self.get_weight_datatype()
