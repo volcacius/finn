@@ -1,6 +1,7 @@
 import numpy as np
 from onnx import TensorProto, helper
 
+import finn.core.onnx_exec as oxe
 from finn.core.datatype import DataType
 from finn.core.modelwrapper import ModelWrapper
 from finn.core.utils import calculate_signed_dot_prod_range, gen_finn_dt_tensor
@@ -31,8 +32,12 @@ def make_single_fclayer_modelwrapper(
         export_idt = idt
         binary_xnor_mode = 0
 
-    inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, [ifm_ch, ifm_dim])
-    outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, [ofm_ch, ofm_dim])
+    inp = helper.make_tensor_value_info(
+        "inp", TensorProto.FLOAT, [1, ifm_ch, ifm_dim, ifm_dim]
+    )
+    outp = helper.make_tensor_value_info(
+        "outp", TensorProto.FLOAT, [ofm_ch, ofm_dim * ofm_dim]
+    )
     if T is not None:
         no_act = 0
         node_inp_list = ["inp", "weights", "thresh"]
@@ -96,7 +101,7 @@ def prepare_inputs(input_tensor, idt, wdt):
 
 
 def test_fpgadataflow_convlayer():
-    ifm_dim = 4
+    ifm_dim = 5
     ifm_ch = 1
     ofm_dim = 2
     ofm_ch = 1
@@ -107,8 +112,7 @@ def test_fpgadataflow_convlayer():
     mw = k * k * ifm_ch
     # generate weights
     wdt = DataType.BIPOLAR
-    W = gen_finn_dt_tensor(wdt, (mw, ofm_ch))
-
+    W = gen_finn_dt_tensor(wdt, (ofm_ch, ifm_ch, k, k))
     # generate thresholds
     idt = odt = DataType.BIPOLAR
     (min, max) = calculate_signed_dot_prod_range(idt, wdt, mw)
@@ -125,5 +129,12 @@ def test_fpgadataflow_convlayer():
         W, k, ifm_ch, ifm_dim, ofm_ch, ofm_dim, pe, simd, wdt, idt, odt, T, tdt
     )
 
+    x = gen_finn_dt_tensor(idt, (1, ifm_ch, ifm_dim, ifm_dim))
+
     model = model.transform(CodeGen())
     model = model.transform(Compile())
+
+    # prepare input data
+    input_dict = prepare_inputs(x, idt, wdt)
+    # execute model
+    y_produced = oxe.execute_onnx(model, input_dict)["outp"]
