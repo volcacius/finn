@@ -332,7 +332,7 @@ class ConvLayer_Batch(HLSCustomOp):
             out = context[node.output[0]]
             out = 2 * out - 1
             context[node.output[0]] = out
-        assert context[node.output[0]].shape == (1, nf, pe)
+        assert context[node.output[0]].shape == (1, outpix, nf, pe)
         # reshape output to have expected shape
         context[node.output[0]] = context[node.output[0]].reshape(ofm_ch, outpix)
 
@@ -426,7 +426,9 @@ class ConvLayer_Batch(HLSCustomOp):
         npy_type = "float"
         npy_out = "%s/output.npy" % code_gen_dir
         nf = int(self.get_nodeattr("OFMChannels") / self.get_nodeattr("PE"))
-        shape = (1, nf, self.get_nodeattr("PE"))
+        ofm_dim = self.get_nodeattr("OFMDim")
+        outpix = ofm_dim * ofm_dim
+        shape = (1, outpix, nf, self.get_nodeattr("PE"))
         shape_cpp_str = str(shape).replace("(", "{").replace(")", "}")
 
         self.code_gen_dict["$DATAOUTSTREAM$"] = [
