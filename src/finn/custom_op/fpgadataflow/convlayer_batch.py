@@ -285,13 +285,13 @@ class ConvLayer_Batch(HLSCustomOp):
 
     def execute_node(self, context, graph):
         node = self.onnx_node
-        ifm_dim = self.get_nodeattr("IFMDIM")
+        ifm_dim = self.get_nodeattr("IFMDim")
         ifm_ch = self.get_nodeattr("IFMChannels")
-        ofm_dim = self.get_nodeattr("OFMDIM")
+        ofm_dim = self.get_nodeattr("OFMDim")
         ofm_ch = self.get_nodeattr("OFMChannels")
         simd = self.get_nodeattr("SIMD")
         pe = self.get_nodeattr("PE")
-        sf = ifm_dim // simd
+        sf = ifm_dim * ifm_dim // simd
         nf = ofm_ch // pe
         outpix = ofm_dim * ofm_dim
 
@@ -349,7 +349,7 @@ class ConvLayer_Batch(HLSCustomOp):
         self.code_gen_dict["$DEFINES$"] = [
             """#define ConvKernelDim1 {}\n #define IFMChannels1 {}
             #define IFMDim1 {}\n #define OFMChannels1 {}\n #define OFMDim1 {}
-            #define SIMD1 \n #define PE1 {}\n #define WMEM1 {}\n #define TMEM1 {}
+            #define SIMD1 {}\n #define PE1 {}\n #define WMEM1 {}\n #define TMEM1 {}
             #define numReps {}""".format(
                 self.get_nodeattr("ConvKernelDim"),
                 self.get_nodeattr("IFMChannels"),
