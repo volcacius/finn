@@ -1,10 +1,12 @@
 import numpy as np
+import onnxruntime as rt
 from onnx import TensorProto, helper
 
 import finn.core.onnx_exec as oxe
 from finn.core.datatype import DataType
 from finn.core.modelwrapper import ModelWrapper
 from finn.core.utils import calculate_signed_dot_prod_range, gen_finn_dt_tensor
+from finn.custom_op.multithreshold import multithreshold
 from finn.transformation.fpgadataflow.codegen import CodeGen
 from finn.transformation.fpgadataflow.compile import Compile
 
@@ -100,10 +102,37 @@ def prepare_inputs(input_tensor, idt, wdt):
         return {"inp": input_tensor}
 
 
+def expected_conv_output_no_pad(x, W, k, ofm_ch, ofm_dim):
+    x_exp = helper.make_tensor_value_info("x", TensorProto.FLOAT, x.shape)
+    W_exp = helper.make_tensor_value_info("W", TensorProto.FLOAT, W.shape)
+    y = helper.make_tensor_value_info(
+        "y", TensorProto.FLOAT, [1, ofm_ch, ofm_dim * ofm_dim, ofm_dim * ofm_dim]
+    )
+    conv_node_no_pad = helper.make_node(
+        "Conv",
+        inputs=["x", "W"],
+        outputs=["y"],
+        kernel_shape=[k, k],
+        # Default values for other attributes:
+        # strides=[1, 1], dilations=[1, 1], groups=1
+        pads=[0, 0, 0, 0],
+    )
+    graph = helper.make_graph(
+        nodes=[conv_node_no_pad], name="conv_graph", inputs=[x_exp, W_exp], outputs=[y]
+    )
+
+    model = helper.make_model(graph, producer_name="conv-model")
+    input_dict = {"x": x, "W": W}
+    sess = rt.InferenceSession(model.SerializeToString())
+    output_dict = sess.run(None, input_dict)
+
+    return output_dict[0]
+
+
 def test_fpgadataflow_convlayer():
-    ifm_dim = 5
+    ifm_dim = 10
     ifm_ch = 1
-    ofm_dim = 2
+    ofm_dim = 3
     ofm_ch = 1
     k = 2
     act = DataType.BIPOLAR
@@ -138,3 +167,22 @@ def test_fpgadataflow_convlayer():
     input_dict = prepare_inputs(x, idt, wdt)
     # execute model
     y_produced = oxe.execute_onnx(model, input_dict)["outp"]
+    print("Input data: {}".format(x))
+    print("Weights: {}".format(W))
+    print("Thresholds: {}".format(T))
+    print("Output: {}".format(y_produced))
+
+    # to calculate the expected output the ONNX convolution node is used
+    expected_conv_output = expected_conv_output_no_pad(x, W, k, ofm_ch, ofm_dim)
+
+    y_expected = multithreshold(expected_conv_output, T)
+    if act == DataType.BIPOLAR:
+        # binary to bipolar
+        y_expected = 2 * y_expected - 1
+    else:
+        # signed offset
+        y_expected += act.min()
+    print(y_expected)
+    # oshape = model.get_tensor_shape("outp")
+    # y_expected = y_expected.reshape(oshape)
+    # assert (y_produced.reshape(y_expected.shape) == y_expected).all()
