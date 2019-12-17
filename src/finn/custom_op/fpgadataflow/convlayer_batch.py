@@ -287,12 +287,13 @@ class ConvLayer_Batch(HLSCustomOp):
         node = self.onnx_node
         ifm_dim = self.get_nodeattr("IFMDIM")
         ifm_ch = self.get_nodeattr("IFMChannels")
-        # ofm_dim = self.get_nodeattr("OFMDIM")
+        ofm_dim = self.get_nodeattr("OFMDIM")
         ofm_ch = self.get_nodeattr("OFMChannels")
         simd = self.get_nodeattr("SIMD")
         pe = self.get_nodeattr("PE")
         sf = ifm_dim // simd
         nf = ofm_ch // pe
+        outpix = ofm_dim * ofm_dim
 
         # TODO ensure codegen dir exists
         code_gen_dir = self.get_nodeattr("code_gen_dir")
@@ -304,8 +305,11 @@ class ConvLayer_Batch(HLSCustomOp):
             # the third input are the thresholds
             if in_ind == 0:
                 assert str(context[inputs].dtype) == "float32"
-                expected_inp_shape = (ifm_ch, sf, simd)
-                reshaped_input = context[inputs].reshape(expected_inp_shape)
+                assert context[inputs].shape == (1, ifm_ch, ifm_dim, ifm_dim)
+                # change input shape to (1, ifm_dim, ifm_dim, ifm_ch)
+                transposed_input = context[inputs].transpose(0, 2, 3, 1)
+                expected_inp_shape = (1, sf, simd)
+                reshaped_input = transposed_input.reshape(expected_inp_shape)
                 # flip SIMD (innermost) dimension of input tensor, there's some reversal
                 # going on somewhere with a mistmatch between npy and hls...
                 reshaped_input = np.flip(reshaped_input, -1)
@@ -328,9 +332,9 @@ class ConvLayer_Batch(HLSCustomOp):
             out = context[node.output[0]]
             out = 2 * out - 1
             context[node.output[0]] = out
-        assert context[node.output[0]].shape == (ofm_ch, nf, pe)
+        assert context[node.output[0]].shape == (1, nf, pe)
         # reshape output to have expected shape
-        context[node.output[0]] = context[node.output[0]].reshape(ofm_ch, ofm_ch)
+        context[node.output[0]] = context[node.output[0]].reshape(ofm_ch, outpix)
 
     def global_includes(self):
         self.code_gen_dict["$GLOBALS$"] = ['#include "weights.hpp"']
