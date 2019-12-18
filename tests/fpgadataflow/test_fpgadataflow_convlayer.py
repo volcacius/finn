@@ -1,4 +1,4 @@
-import math
+import pytest
 
 import numpy as np
 import onnxruntime as rt
@@ -16,10 +16,6 @@ from finn.transformation.fpgadataflow.compile import Compile
 def make_single_fclayer_modelwrapper(
     W, k, ifm_ch, ifm_dim, ofm_ch, ofm_dim, pe, simd, wdt, idt, odt, T=None, tdt=None
 ):
-    mw = W.shape[0]
-    mh = W.shape[1]
-    assert mh % pe == 0
-    assert mw % simd == 0
 
     # there are two ways to implement bipolar weights and inputs for
     # StreamingFC:
@@ -104,11 +100,12 @@ def prepare_inputs(input_tensor, idt, wdt):
         return {"inp": input_tensor}
 
 
-def expected_conv_output_no_pad(x, W, k, ofm_ch, ofm_dim):
+def expected_conv_output_no_pad(x, W, k, idt, wdt, ofm_ch, ofm_dim):
+
     x_exp = helper.make_tensor_value_info("x", TensorProto.FLOAT, x.shape)
     W_exp = helper.make_tensor_value_info("W", TensorProto.FLOAT, W.shape)
     y = helper.make_tensor_value_info(
-        "y", TensorProto.FLOAT, [1, ofm_ch, ofm_dim * ofm_dim, ofm_dim * ofm_dim]
+        "y", TensorProto.FLOAT, [1, ofm_ch, ofm_dim, ofm_dim]
     )
     conv_node_no_pad = helper.make_node(
         "Conv",
@@ -125,36 +122,59 @@ def expected_conv_output_no_pad(x, W, k, ofm_ch, ofm_dim):
 
     model = helper.make_model(graph, producer_name="conv-model")
     input_dict = {"x": x, "W": W}
+    print(input_dict)
     sess = rt.InferenceSession(model.SerializeToString())
     output_dict = sess.run(None, input_dict)
 
     return output_dict[0]
 
 
-def test_fpgadataflow_convlayer():
-    ifm_dim = 10
+# activation: None or DataType
+@pytest.mark.parametrize("act", [None, DataType.INT2])
+# weight datatype
+@pytest.mark.parametrize("wdt", [DataType.INT2])
+# input datatype
+@pytest.mark.parametrize("idt", [DataType.INT2])
+# neuron folding, -1 is maximum possible
+@pytest.mark.parametrize("ifm_dim", [3, 6, 9])
+# synapse folding, -1 is maximum possible
+@pytest.mark.parametrize("k", [2, 3])
+# HLS matrix width (input features)
+@pytest.mark.parametrize("pe", [1])
+# HLS matrix height (output features)
+@pytest.mark.parametrize("simd", [1])
+def test_fpgadataflow_convlayer(act, wdt, idt, ifm_dim, k, pe, simd):
+
     ifm_ch = 1
-    k = 2
-    ofm_dim = int(math.sqrt(ifm_dim - k + 1))
+    ofm_dim = ifm_dim - k + 1
     ofm_ch = 1
-    act = DataType.BIPOLAR
-    pe = 1
-    simd = 1
     mw = k * k * ifm_ch
-    # generate weights
-    wdt = DataType.BIPOLAR
+    mh = ofm_ch
     W = gen_finn_dt_tensor(wdt, (ofm_ch, ifm_ch, k, k))
-    # generate thresholds
-    idt = odt = DataType.BIPOLAR
-    (min, max) = calculate_signed_dot_prod_range(idt, wdt, mw)
-    n_steps = act.get_num_possible_values() - 1
-    T = np.random.randint(min, max - 1, (ofm_ch, n_steps)).astype(np.float32)
-    # provide non-decreasing thresholds
-    T = np.sort(T, axis=1)
-    tdt = DataType.UINT32
-    # bias thresholds to be positive
-    T = np.ceil((T + mw) / 2)
-    assert (T >= 0).all()
+
+    if act is None:
+        # no activation, produce accumulators
+        T = None
+        tdt = None
+        if wdt == DataType.BIPOLAR and idt == DataType.BIPOLAR:
+            odt = DataType.UINT32
+        else:
+            odt = DataType.INT32
+    else:
+        odt = act
+        (min, max) = calculate_signed_dot_prod_range(idt, wdt, mw)
+        n_steps = act.get_num_possible_values() - 1
+        T = np.random.randint(min, max - 1, (mh, n_steps)).astype(np.float32)
+        # provide non-decreasing thresholds
+        T = np.sort(T, axis=1)
+        # generate thresholds for activation
+        if wdt == DataType.BIPOLAR and idt == DataType.BIPOLAR:
+            tdt = DataType.UINT32
+            # bias thresholds to be positive
+            T = np.ceil((T + mw) / 2)
+            assert (T >= 0).all()
+        else:
+            tdt = DataType.INT32
 
     model = make_single_fclayer_modelwrapper(
         W, k, ifm_ch, ifm_dim, ofm_ch, ofm_dim, pe, simd, wdt, idt, odt, T, tdt
@@ -169,22 +189,21 @@ def test_fpgadataflow_convlayer():
     input_dict = prepare_inputs(x, idt, wdt)
     # execute model
     y_produced = oxe.execute_onnx(model, input_dict)["outp"]
-    print("Input data: {}".format(x))
-    print("Weights: {}".format(W))
-    print("Thresholds: {}".format(T))
-    print("Output: {}".format(y_produced))
 
     # to calculate the expected output the ONNX convolution node is used
-    expected_conv_output = expected_conv_output_no_pad(x, W, k, ofm_ch, ofm_dim)
+    oshape = model.get_tensor_shape("outp")
+    expected_conv_output = expected_conv_output_no_pad(
+        x, W, k, idt, wdt, ofm_ch, ofm_dim
+    )
+    y_expected = expected_conv_output.reshape(oshape)
 
-    y_expected = multithreshold(expected_conv_output, T)
-    if act == DataType.BIPOLAR:
-        # binary to bipolar
-        y_expected = 2 * y_expected - 1
-    else:
-        # signed offset
-        y_expected += act.min()
-    print(y_expected)
-    # oshape = model.get_tensor_shape("outp")
-    # y_expected = y_expected.reshape(oshape)
-    # assert (y_produced.reshape(y_expected.shape) == y_expected).all()
+    if T is not None:
+        y_expected = multithreshold(y_expected, T)
+        if act == DataType.BIPOLAR:
+            # binary to bipolar
+            y_expected = 2 * y_expected - 1
+        else:
+            # signed offset
+            y_expected += act.min()
+
+    assert (y_produced.reshape(y_expected.shape) == y_expected).all()
