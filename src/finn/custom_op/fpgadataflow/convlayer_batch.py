@@ -340,9 +340,9 @@ class ConvLayer_Batch(HLSCustomOp):
         self.code_gen_dict["$GLOBALS$"] = ['#include "weights.hpp"']
         self.code_gen_dict["$GLOBALS$"] += ['#include "activations.hpp"']
         self.code_gen_dict["$GLOBALS$"] += ['#include "params.h"']
-        self.code_gen_dict["$GLOBALS$"] += ['#include "thresh.h"']
-        self.code_gen_dict["$GLOBALS$"] += ['#include "mvau.hpp"']
-        self.code_gen_dict["$GLOBALS$"] += ['#include "interpret.hpp"']
+        if self.calc_tmem() != 0:
+            # TODO find a better way of checking for no pregenerated thresholds
+            self.code_gen_dict["$GLOBALS$"] += ['#include "thresh.h"']
 
     def defines(self):
         numReps = 1
