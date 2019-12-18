@@ -136,13 +136,13 @@ def expected_conv_output_no_pad(x, W, k, ofm_ch, ofm_dim):
 @pytest.mark.parametrize("wdt", [DataType.BIPOLAR, DataType.INT2])
 # input datatype
 @pytest.mark.parametrize("idt", [DataType.BIPOLAR, DataType.INT2])
-# neuron folding, -1 is maximum possible
+# input dimension
 @pytest.mark.parametrize("ifm_dim", [3, 6, 9])
-# synapse folding, -1 is maximum possible
+# kernel size
 @pytest.mark.parametrize("k", [2, 3])
-# HLS matrix width (input features)
+# number of PEs
 @pytest.mark.parametrize("pe", [1])
-# HLS matrix height (output features)
+# number of SIMDs
 @pytest.mark.parametrize("simd", [1])
 def test_fpgadataflow_convlayer(act, wdt, idt, ifm_dim, k, pe, simd):
 
