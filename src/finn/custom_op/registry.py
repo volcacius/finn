@@ -5,6 +5,7 @@ from finn.custom_op.fpgadataflow.streamingfclayer_batch import StreamingFCLayer_
 from finn.custom_op.fpgadataflow.streamingmaxpool_batch import StreamingMaxPool_Batch
 from finn.custom_op.multithreshold import MultiThreshold
 from finn.custom_op.xnorpopcount import XnorPopcountMatMul
+from finn.custom_op.xnorpopcountconvlayer import XnorPopcountConvLayer
 
 # create a mapping of all known CustomOp names and classes
 custom_op = {}
@@ -14,3 +15,4 @@ custom_op["XnorPopcountMatMul"] = XnorPopcountMatMul
 custom_op["StreamingMaxPool_Batch"] = StreamingMaxPool_Batch
 custom_op["StreamingFCLayer_Batch"] = StreamingFCLayer_Batch
 custom_op["ConvLayer_Batch"] = ConvLayer_Batch
+custom_op["XnorPopcountConvLayer"] = XnorPopcountConvLayer

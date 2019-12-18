@@ -43,7 +43,7 @@ def xnorpopcount_convolution(inp, W, k):
     return (output + (k * k * ifm_ch)) * 0.5
 
 
-class xnorpopcount_convlayer(CustomOp):
+class XnorPopcountConvLayer(CustomOp):
     def get_nodeattr_types(self):
         return {
             "ConvKernelDim": ("i", True, 0),
