@@ -9,6 +9,7 @@ from finn.core.datatype import DataType
 from finn.core.modelwrapper import ModelWrapper
 from finn.core.utils import calculate_signed_dot_prod_range, gen_finn_dt_tensor
 from finn.custom_op.multithreshold import multithreshold
+from finn.custom_op.xnorpopcountconvlayer import xnorpopcount_convolution
 from finn.transformation.fpgadataflow.codegen import CodeGen
 from finn.transformation.fpgadataflow.compile import Compile
 
@@ -100,7 +101,7 @@ def prepare_inputs(input_tensor, idt, wdt):
         return {"inp": input_tensor}
 
 
-def expected_conv_output_no_pad(x, W, k, idt, wdt, ofm_ch, ofm_dim):
+def expected_conv_output_no_pad(x, W, k, ofm_ch, ofm_dim):
 
     x_exp = helper.make_tensor_value_info("x", TensorProto.FLOAT, x.shape)
     W_exp = helper.make_tensor_value_info("W", TensorProto.FLOAT, W.shape)
@@ -132,9 +133,9 @@ def expected_conv_output_no_pad(x, W, k, idt, wdt, ofm_ch, ofm_dim):
 # activation: None or DataType
 @pytest.mark.parametrize("act", [None, DataType.INT2])
 # weight datatype
-@pytest.mark.parametrize("wdt", [DataType.INT2])
+@pytest.mark.parametrize("wdt", [DataType.BIPOLAR, DataType.INT2])
 # input datatype
-@pytest.mark.parametrize("idt", [DataType.INT2])
+@pytest.mark.parametrize("idt", [DataType.BIPOLAR, DataType.INT2])
 # neuron folding, -1 is maximum possible
 @pytest.mark.parametrize("ifm_dim", [3, 6, 9])
 # synapse folding, -1 is maximum possible
@@ -191,10 +192,12 @@ def test_fpgadataflow_convlayer(act, wdt, idt, ifm_dim, k, pe, simd):
     y_produced = oxe.execute_onnx(model, input_dict)["outp"]
 
     # to calculate the expected output the ONNX convolution node is used
+    if wdt == DataType.BIPOLAR and idt == DataType.BIPOLAR:
+        # convert input to binary and use xnorpopcountmatmul
+        expected_conv_output = xnorpopcount_convolution(x, W, k)
+    else:
+        expected_conv_output = expected_conv_output_no_pad(x, W, k, ofm_ch, ofm_dim)
     oshape = model.get_tensor_shape("outp")
-    expected_conv_output = expected_conv_output_no_pad(
-        x, W, k, idt, wdt, ofm_ch, ofm_dim
-    )
     y_expected = expected_conv_output.reshape(oshape)
 
     if T is not None:
