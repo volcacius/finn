@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import onnxruntime as rt
 from onnx import TensorProto, helper
@@ -132,9 +134,9 @@ def expected_conv_output_no_pad(x, W, k, ofm_ch, ofm_dim):
 def test_fpgadataflow_convlayer():
     ifm_dim = 10
     ifm_ch = 1
-    ofm_dim = 3
-    ofm_ch = 1
     k = 2
+    ofm_dim = int(math.sqrt(ifm_dim - k + 1))
+    ofm_ch = 1
     act = DataType.BIPOLAR
     pe = 1
     simd = 1
