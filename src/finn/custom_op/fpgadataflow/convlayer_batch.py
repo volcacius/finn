@@ -321,7 +321,7 @@ class ConvLayer_Batch(HLSCustomOp):
                     reshaped_input,
                 )
             elif in_ind > 2:
-                raise Exception("Unexpected input found for StreamingFCLayer")
+                raise Exception("Unexpected input found for ConvLayer")
             in_ind += 1
         # execute the precompiled model
         super().exec_precompiled_singlenode_model()
