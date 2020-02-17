@@ -15,6 +15,16 @@ RUN pip install pytest-dependency
 RUN apt-get install -y build-essential libglib2.0-0 libsm6 libxext6 libxrender-dev
 RUN apt install verilator
 
+# install Jenkins
+RUN apt-get update
+RUN apt install -y default-jdk-headless
+RUN apt install wget
+RUN wget -q -O - https://pkg.jenkins.io/debian/jenkins.io.key | apt-key add -
+RUN sh -c 'echo deb http://pkg.jenkins.io/debian-stable binary/ > /etc/apt/sources.list.d/jenkins.list'
+RUN apt-get install -y apt-utils
+RUN apt-get update
+RUN apt-get install -y jenkins
+
 # Note that we expect the cloned finn directory on the host to be
 # mounted on /workspace/finn -- see run-docker.sh for an example
 # of how to do this.
