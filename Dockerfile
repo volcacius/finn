@@ -25,12 +25,9 @@ RUN apt-get install -y apt-utils
 RUN apt-get update
 RUN apt-get install -y jenkins
 
-# install smee client
+# install smee client by installing npm and nodejs
 RUN apt install -y npm
 RUN npm install --global smee-client
-#RUN apt-get install nodejs
-#RUN update-alternatives --install /usr/bin/node nodejs /usr/bin/nodejs 100
-#RUN npm update
 RUN npm cache clean -f
 RUN npm install -g n
 RUN n stable
