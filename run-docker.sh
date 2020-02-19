@@ -25,6 +25,9 @@ DOCKER_INST_NAME=$(echo "$DOCKER_INST_NAME" | tr '[:upper:]' '[:lower:]')
 : ${JUPYTER_PORT=8888}
 : ${NETRON_PORT=8081}
 : ${PYNQ_BOARD="Pynq-Z1"}
+: ${JENKINS_PORT=8080}
+# the following link has a webhook in the git repo
+: ${SMEE_LINK="https://smee.io/nU1z3DIBtJHc5TNu"}
 
 # Absolute path to this script, e.g. /home/user/bin/foo.sh
 SCRIPT=$(readlink -f "$0")
@@ -74,6 +77,7 @@ echo "Port-forwarding for Jupyter $JUPYTER_PORT:$JUPYTER_PORT"
 echo "Port-forwarding for Netron $NETRON_PORT:$NETRON_PORT"
 echo "Vivado IP cache dir is at $VIVADO_IP_CACHE"
 echo "Using default PYNQ board $PYNQ_BOARD"
+echo "Port-forwarding for Jenkins $JENKINS_PORT:$JENKINS_PORT"
 
 if [ "$1" = "test" ]; then
         echo "Running test suite"
@@ -81,6 +85,9 @@ if [ "$1" = "test" ]; then
 elif [ "$1" = "notebook" ]; then
         echo "Running Jupyter notebook server"
         DOCKER_CMD="source ~/.bashrc; jupyter notebook --ip=0.0.0.0 --port $JUPYTER_PORT notebooks"
+elif [ "$1" = "jenkins" ]; then
+	echo "Running Jenkins"
+	DOCKER_CMD="smee --url $SMEE_LINK --path /github-webhook/ --port $JENKINS_PORT & java -jar /usr/share/jenkins/jenkins.war"
 else
         echo "Running container only"
         DOCKER_CMD="bash"
@@ -117,6 +124,5 @@ docker run -t --rm --name $DOCKER_INST_NAME -it \
 -e PYNQ_BOARD=$PYNQ_BOARD \
 -p $JUPYTER_PORT:$JUPYTER_PORT \
 -p $NETRON_PORT:$NETRON_PORT \
--p 8080:8080 \
--p 50000:50000 \
+-p $JENKINS_PORT:$JENKINS_PORT \
 $DOCKER_TAG bash -c "$DOCKER_CMD"
