@@ -1,8 +1,39 @@
 #!/bin/bash
+# Copyright (c) 2020, Xilinx
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice, this
+#   list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+#
+# * Neither the name of FINN nor the names of its
+#   contributors may be used to endorse or promote products derived from
+#   this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 if [ -z "$VIVADO_PATH" ];then
         echo "For correct implementation please set an environment variable VIVADO_PATH that contains the path to your vivado installation directory"
         exit 1
+fi
+
+if [ -z "$PYNQ_IP" ];then
+        echo "Please set the PYNQ_IP env.var. to enable PYNQ deployment tests."
 fi
 
 DOCKER_GID=$(id -g)
@@ -24,10 +55,13 @@ DOCKER_INST_NAME=$(echo "$DOCKER_INST_NAME" | tr '[:upper:]' '[:lower:]')
 # otherwise the defaults below will be used
 : ${JUPYTER_PORT=8888}
 : ${NETRON_PORT=8081}
+: ${PYNQ_USERNAME="xilinx"}
+: ${PYNQ_PASSWORD="xilinx"}
 : ${PYNQ_BOARD="Pynq-Z1"}
 : ${JENKINS_PORT=8080}
 # the following link has a webhook in the git repo
 : ${SMEE_LINK="https://smee.io/nU1z3DIBtJHc5TNu"}
+: ${PYNQ_TARGET_DIR="/home/xilinx/$DOCKER_INST_NAME"}
 
 # Absolute path to this script, e.g. /home/user/bin/foo.sh
 SCRIPT=$(readlink -f "$0")
@@ -122,6 +156,10 @@ docker run -t --rm --name $DOCKER_INST_NAME -it \
 -e FINN_ROOT="/workspace/finn" \
 -e VIVADO_IP_CACHE="$VIVADO_IP_CACHE" \
 -e PYNQ_BOARD=$PYNQ_BOARD \
+-e PYNQ_IP=$PYNQ_IP \
+-e PYNQ_USERNAME=$PYNQ_USERNAME \
+-e PYNQ_PASSWORD=$PYNQ_PASSWORD \
+-e PYNQ_TARGET_DIR=$PYNQ_TARGET_DIR \
 -p $JUPYTER_PORT:$JUPYTER_PORT \
 -p $NETRON_PORT:$NETRON_PORT \
 -p $JENKINS_PORT:$JENKINS_PORT \

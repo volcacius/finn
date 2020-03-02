@@ -1,3 +1,31 @@
+# Copyright (c) 2020, Xilinx
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice, this
+#   list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+#
+# * Neither the name of FINN nor the names of its
+#   contributors may be used to endorse or promote products derived from
+#   this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 import os
 import subprocess
 
@@ -5,6 +33,8 @@ from pyverilator import PyVerilator
 
 
 class IPGenBuilder:
+    """Builds the bash script to generate IP blocks using Vivado HLS."""
+
     def __init__(self):
         self.tcl_script = ""
         self.ipgen_path = ""
@@ -12,12 +42,17 @@ class IPGenBuilder:
         self.ipgen_script = ""
 
     def append_tcl(self, tcl_script):
+        """Sets member variable "tcl_script" to given tcl script."""
         self.tcl_script = tcl_script
 
     def set_ipgen_path(self, path):
+        """Sets member variable ipgen_path to given path."""
         self.ipgen_path = path
 
     def build(self, code_gen_dir):
+        """Builds the bash script with given parameters and saves it in given folder.
+        To guarantee the generation in the correct folder the bash script contains a
+        cd command."""
         self.code_gen_dir = code_gen_dir
         self.ipgen_script = str(self.code_gen_dir) + "/ipgen.sh"
         working_dir = os.environ["PWD"]
@@ -45,3 +80,10 @@ def pyverilate_stitched_ip(model):
     top_verilog = model.get_metadata_prop("wrapper_filename")
     sim = PyVerilator.build(top_verilog, verilog_path=all_verilog_dirs)
     return sim
+
+
+def pyverilate_get_liveness_threshold_cycles():
+    """Return the number of no-output cycles rtlsim will wait before assuming
+    the simulation is not finishing and throwing an exception."""
+
+    return int(os.getenv("LIVENESS_THRESHOLD", 10000))

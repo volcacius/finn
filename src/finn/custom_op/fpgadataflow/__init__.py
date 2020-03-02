@@ -1,14 +1,50 @@
+# Copyright (c) 2020, Xilinx
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice, this
+#   list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+#
+# * Neither the name of FINN nor the names of its
+#   contributors may be used to endorse or promote products derived from
+#   this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 from abc import abstractmethod
 import numpy as np
 import os
 import subprocess
 from finn.custom_op import CustomOp
 from finn.util.basic import CppBuilder
-from finn.util.fpgadataflow import IPGenBuilder
+from finn.util.fpgadataflow import (
+    IPGenBuilder,
+    pyverilate_get_liveness_threshold_cycles,
+)
 from . import templates
 
 
 class HLSCustomOp(CustomOp):
+    """HLSCustomOp class all custom ops that correspond to a finn-hlslib
+    function are based on. Contains different functions every fpgadataflow
+    custom node should have. Some as abstract methods, these have to be filled
+    when writing a new fpgadataflow custom op node."""
+
     def __init__(self, onnx_node):
         super().__init__(onnx_node)
 
@@ -32,23 +68,31 @@ class HLSCustomOp(CustomOp):
             "code_gen_dir_ipgen": ("s", False, ""),
             "executable_path": ("s", False, ""),
             "ipgen_path": ("s", False, ""),
-            "sim_mode": ("s", False, ""),
+            "exec_mode": ("s", False, ""),
             "sim_cycles": ("i", False, 0),
+            "rtlsim_trace": ("s", False, ""),
         }
 
     def node_res_estimation(self):
+        """Returns summarized resource estimation of BRAMs and LUTs
+        of the node."""
         resources = []
         resources.append("BRAMs: " + str(self.bram_estimation()))
         resources.append("LUTs: " + str(self.lut_estimation()))
         return resources
 
     def bram_estimation(self):
+        """Function for BRAM resource estimation, is member function of
+        HLSCustomOp class but has to be filled by every node"""
         return 0
 
     def lut_estimation(self):
+        """Function for LUT resource estimation, is member function of
+        HLSCustomOp class but has to be filled by every node"""
         return 0
 
     def code_generation_ipgen(self, model, fpgapart, clk):
+        """Generates c++ code and tcl script for ip generation."""
         node = self.onnx_node
 
         # generate top cpp file for ip generation
@@ -93,6 +137,8 @@ class HLSCustomOp(CustomOp):
         self.code_gen_dict.clear()
 
     def ipgen_singlenode_code(self):
+        """Builds the bash script for ip generation using the IPGenBuilder from
+        finn.util.fpgadataflow."""
         node = self.onnx_node
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         builder = IPGenBuilder()
@@ -102,6 +148,7 @@ class HLSCustomOp(CustomOp):
         self.set_nodeattr("ipgen_path", builder.ipgen_path)
 
     def code_generation_npysim(self, model):
+        """Generates c++ code for simulation (npysim)."""
         node = self.onnx_node
         path = self.get_nodeattr("code_gen_dir_npysim")
         self.generate_params(model, path)
@@ -126,6 +173,8 @@ class HLSCustomOp(CustomOp):
         self.code_gen_dict.clear()
 
     def compile_singlenode_code(self):
+        """Builds the bash script for compilation using the CppBuilder from
+        finn.util.basic and executes the script to produce the executable."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_npysim")
         builder = CppBuilder()
         # to enable additional debug features please uncommand the next line
@@ -143,6 +192,9 @@ class HLSCustomOp(CustomOp):
         self.set_nodeattr("executable_path", builder.executable_path)
 
     def dynamic_input_to_npy(self, context, count):
+        """Saves input (given context) into .npy files.
+
+        Count indicates the number of inputs that have to be saved."""
         node = self.onnx_node
         code_gen_dir = self.get_nodeattr("code_gen_dir_npysim")
         if code_gen_dir == "":
@@ -161,6 +213,8 @@ Found no codegen dir for this node, did you run the codegen_npysim transformatio
             )
 
     def npy_to_dynamic_output(self, context):
+        """Reads the output from a .npy file and saves it at the right place in
+        the context dictionary."""
         # TODO support multi-output nodes as needed
         node = self.onnx_node
         code_gen_dir = self.get_nodeattr("code_gen_dir_npysim")
@@ -168,7 +222,7 @@ Found no codegen dir for this node, did you run the codegen_npysim transformatio
         context[node.output[0]] = output
 
     def exec_precompiled_singlenode_model(self):
-        # execute precompiled executable
+        """Executes precompiled executable."""
         executable_path = self.get_nodeattr("executable_path")
         if executable_path == "":
             raise Exception(
@@ -181,17 +235,29 @@ compilation transformations?
         process_execute.communicate()
 
     def reset_rtlsim(self, sim):
+        """Sets reset input in pyverilator to zero, toggles the clock and set it
+        back to one"""
         sim.io.ap_rst_n = 0
         sim.io.ap_clk = 1
         sim.io.ap_clk = 0
         sim.io.ap_rst_n = 1
 
     def toggle_clk(self, sim):
+        """Toggles the clock input in pyverilator once."""
         sim.io.ap_clk = 1
         sim.io.ap_clk = 0
 
     def rtlsim(self, sim, inp):
-        # import pdb; pdb.set_trace()
+        """Runs the pyverilator simulation by passing the input values to the simulation,
+        toggle the clock and observing the execution time. Function contains also an
+        observation loop that can abort the simulation if no output value is produced
+        after 100 cycles."""
+
+        trace_file = self.get_nodeattr("rtlsim_trace")
+        if trace_file != "":
+            if trace_file == "default":
+                trace_file = self.onnx_node.name + ".vcd"
+            sim.start_vcd_trace(trace_file)
         inputs = inp
         outputs = []
         sim.io.out_V_V_TREADY = 1
@@ -206,6 +272,7 @@ compilation transformations?
         # output values after 100 cycles
         no_change_count = 0
         old_outputs = outputs
+        liveness_threshold = pyverilate_get_liveness_threshold_cycles()
 
         while not (output_observed):
             sim.io.in0_V_V_TVALID = 1 if len(inputs) > 0 else 0
@@ -224,21 +291,27 @@ compilation transformations?
                 self.set_nodeattr("sim_cycles", observation_count)
                 output_observed = True
 
-            if no_change_count == 100:
+            if no_change_count == liveness_threshold:
                 if old_outputs == outputs:
+                    if trace_file != "":
+                        sim.flush_vcd_trace()
+                        sim.stop_vcd_trace()
                     raise Exception(
-                        "Error in simulation! Takes too long to produce output."
+                        "Error in simulation! Takes too long to produce output. "
+                        "Consider setting the LIVENESS_THRESHOLD env.var. to a "
+                        "larger value."
                     )
                 else:
                     no_change_count = 0
                     old_outputs = outputs
-            print(inputs)
-            print(outputs)
-
+        if trace_file != "":
+            sim.flush_vcd_trace()
+            sim.stop_vcd_trace()
         return outputs
 
     def execute_node(self, context, graph):
-        mode = self.get_nodeattr("sim_mode")
+        """Executes single node using npysim or rtlsim."""
+        mode = self.get_nodeattr("exec_mode")
         if mode == "npysim":
             # save input(s)
             self.dynamic_input_to_npy(context, 1)
@@ -251,63 +324,101 @@ compilation transformations?
 
         else:
             raise Exception(
-                """Invalid value for attribute sim_mode! Is currently set to: {}
+                """Invalid value for attribute exec_mode! Is currently set to: {}
             has to be set to one of the following value ("npysim", "rtlsim")""".format(
                     mode
                 )
             )
 
     def generate_params(self, model, path):
+        """Function to generate parameters (i.e. weights and thresholds),
+        is member function of HLSCustomOp class but has to be filled
+        by every node."""
         pass
 
     @abstractmethod
     def get_number_output_values(self):
+        """Function to get the number of expected output values,
+        is member function of HLSCustomOp class but has to be filled
+        by every node."""
         pass
 
     @abstractmethod
     def global_includes(self):
+        """Function to set the global includes for c++ code that has to be generated
+        for npysim or rtlsim, is member function of HLSCustomOp class but has to
+        be filled by every node."""
         pass
 
     @abstractmethod
     def defines(self, var):
+        """Function to set the define commands for c++ code that has to be generated
+        for npysim or rtlsim, is member function of HLSCustomOp class but has to
+        be filled by every node.
+
+        var: makes it possible to reuse the function for different c++ code generation.
+        I.e. if set to "ipgen" in StreamingFCLayer_Batch additional PRAGMA defines are
+        added."""
         pass
 
     @abstractmethod
     def read_npy_data(self):
+        """Function to generate the commands for reading data from .npy file in c++,
+        is member function of HLSCustomOp class but has to be filled by every node."""
         pass
 
     @abstractmethod
     def strm_decl(self):
+        """Function to generate the commands for the stream declaration in c++,
+        is member function of HLSCustomOp class but has to be filled
+        by every node."""
         pass
 
     @abstractmethod
     def docompute(self):
+        """Function to generate the commands for the computational part of the
+        c++ code, is member function of HLSCustomOp class but has to be filled
+        by every node."""
         pass
 
     @abstractmethod
     def dataoutstrm(self):
+        """Function to generate the commands for reading out data from c++ and convert
+        into npy format, is member function of HLSCustomOp class but has to be filled
+        by every node."""
         pass
 
     @abstractmethod
     def save_as_npy(self):
+        """Function to generate the commands for saving data in .npy file in c++,
+        is member function of HLSCustomOp class but has to be filled by every node."""
         pass
 
     @abstractmethod
     def blackboxfunction(self):
+        """Function to generate a blackbock function in c++ from which an IP block
+        will be generated, is member function of HLSCustomOp class but has to be filled
+        by every node."""
         pass
 
     @abstractmethod
     def pragmas(self):
+        """Function to generate the pragma commands in c++, is member function of
+        HLSCustomOp class but has to be filled by every node."""
         pass
 
     def get_folded_input_shape(self):
+        """Returns folded input shape (according to synapse folding), if implemented."""
         raise Exception("get_folded_input_shape not implemented for this op")
 
     def get_folded_output_shape(self):
+        """Returns folded output shape (according to neuron folding), if implemented."""
         raise Exception("get_folded_output_shape not implemented for this op")
 
     def get_instream_width(self):
+        """Returns input stream width, if implemented."""
         raise Exception("get_instream_width not implemented for this op")
 
     def get_outstream_width(self):
+        """Returns output stream width, if implemented."""
         raise Exception("get_outstream_width not implemented for this op")

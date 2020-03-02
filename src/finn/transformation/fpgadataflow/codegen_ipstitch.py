@@ -1,3 +1,31 @@
+# Copyright (c) 2020, Xilinx
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice, this
+#   list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+#
+# * Neither the name of FINN nor the names of its
+#   contributors may be used to endorse or promote products derived from
+#   this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 import os
 import subprocess
 
@@ -9,7 +37,8 @@ class CodeGen_ipstitch(Transformation):
     """Create a Vivado IP Block Design project from all the generated IPs of a
     graph. All nodes in the graph must have the fpgadataflow backend attribute,
     and the CodeGen_ipgen transformation must have been previously run on
-    the graph. The resulting block design is also packaged as IP.
+    the graph. The resulting block design is also packaged as IP. The
+    transformation gets the fpgapart as a string.
 
     Outcome if successful: sets the vivado_stitch_proj attribute in the ONNX
     ModelProto's metadata_props field, with the created project dir as the
@@ -28,16 +57,22 @@ class CodeGen_ipstitch(Transformation):
         connect_cmds = []
         # ensure that all nodes are fpgadataflow, and that IPs are generated
         for node in model.graph.node:
-            assert node.domain == "finn"
+            assert node.domain == "finn", 'Node domain is not set to "finn"'
             backend_attribute = get_by_name(node.attribute, "backend")
-            assert backend_attribute is not None
+            assert backend_attribute is not None, "Backend node attribute is not set."
             backend_value = backend_attribute.s.decode("UTF-8")
-            assert backend_value == "fpgadataflow"
+            assert (
+                backend_value == "fpgadataflow"
+            ), """Backend node attribute is not
+            set to "fpgadataflow"."""
             ip_dir_attribute = get_by_name(node.attribute, "ipgen_path")
-            assert ip_dir_attribute is not None
+            assert (
+                ip_dir_attribute is not None
+            ), """Node attribute "ipgen_path" is not set.
+            Please run transformation CodeGen_ipgen first."""
             ip_dir_value = ip_dir_attribute.s.decode("UTF-8")
             ip_dir_value += "/sol1/impl/ip"
-            assert os.path.isdir(ip_dir_value)
+            assert os.path.isdir(ip_dir_value), "IP generation directory doesn't exist."
             ip_dirs += [ip_dir_value]
             vlnv = "xilinx.com:hls:%s:1.0" % node.name
             inst_name = node.name
@@ -81,7 +116,11 @@ class CodeGen_ipstitch(Transformation):
             if model.find_consumer(node.output[0]) is None:
                 # last node in graph
                 # ensure it is a TLastMarker to have a valid TLast signal
-                assert node.op_type == "TLastMarker"
+                assert (
+                    node.op_type == "TLastMarker"
+                ), """Last node is not TLastMarker.
+                Please run transformation InsertTLastMarker to ensure a valid
+                TLast signal"""
                 # make output external
                 connect_cmds.append(
                     "make_bd_intf_pins_external [get_bd_intf_pins %s/out_r]" % inst_name

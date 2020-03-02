@@ -1,7 +1,39 @@
+# Copyright (c) 2020, Xilinx
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice, this
+#   list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+#
+# * Neither the name of FINN nor the names of its
+#   contributors may be used to endorse or promote products derived from
+#   this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 from finn.custom_op.fpgadataflow import HLSCustomOp
 
 
 class TLastMarker(HLSCustomOp):
+    """Class that corresponds to the TLastMarker node that needs to be
+    inserted at the end of the model for rtlsim with stitched IP.
+    It marks the end of the current image/input sample."""
+
     def __init__(self, onnx_node):
         super().__init__(onnx_node)
 
@@ -17,8 +49,15 @@ class TLastMarker(HLSCustomOp):
         return my_attrs
 
     def execute_node(self, context, graph):
-        # TODO consider implementing rtlsim for TLastMarker
-        raise Exception("TLastMarker does yet not support execution")
+        # TLastMarker's behavior is only visible when doing
+        # rtlsim with stitched IP, since it marks the end
+        # of the current image/input sample. when executing
+        # inside FINN as a single node, this is not visible.
+        # so here we simply return the input as output
+        i_name = self.onnx_node.input[0]
+        o_name = self.onnx_node.output[0]
+        i_tensor = context[i_name]
+        context[o_name] = i_tensor
 
     def make_shape_compatible_op(self):
         # not supported for shape inference
@@ -47,12 +86,7 @@ class TLastMarker(HLSCustomOp):
         ]
 
     def read_npy_data(self):
-        # TLastMarker does not support npysim
         self.code_gen_dict["$READNPYDATA$"] = []
-
-    def strm_decl(self):
-        # TLastMarker does not support npysim
-        self.code_gen_dict["$STREAMDECLARATIONS$"] = []
 
     def docompute(self):
         self.code_gen_dict["$DOCOMPUTE$"] = [
@@ -67,7 +101,6 @@ class TLastMarker(HLSCustomOp):
         ]
 
     def dataoutstrm(self):
-        # TLastMarker does not support npysim
         self.code_gen_dict["$DATAOUTSTREAM$"] = []
 
     def save_as_npy(self):
@@ -107,3 +140,12 @@ class TLastMarker(HLSCustomOp):
     def get_outstream_width(self):
         stream_width = self.get_nodeattr("StreamWidth")
         return stream_width
+
+    def strm_decl(self):
+        self.code_gen_dict["$STREAMDECLARATIONS$"] = []
+        self.code_gen_dict["$STREAMDECLARATIONS$"].append(
+            'hls::stream<ap_uint<{}>> in0 ("in0");'.format(self.get_instream_width())
+        )
+        self.code_gen_dict["$STREAMDECLARATIONS$"].append(
+            'hls::stream<OutDType> out ("out");'
+        )
