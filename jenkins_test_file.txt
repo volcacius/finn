@@ -1,3 +1,0 @@
-This is a test file to see the behaviour of jenkins when doing multiple commits in one push.
-
-And another line to commit.
