@@ -29,7 +29,10 @@
 import os
 
 import numpy as np
-from pyverilator import PyVerilator
+try:
+    from pyverilator import PyVerilator
+except ModuleNotFoundError:
+    PyVerilator = None
 
 from finn.core.datatype import DataType
 from finn.custom_op.fpgadataflow import HLSCustomOp
@@ -144,6 +147,9 @@ class ConvolutionInputGenerator(HLSCustomOp):
                 1, out_pix, k * k * ifm_ch
             )
         elif mode == "rtlsim":
+            if PyVerilator is None:
+                raise ImportError("Installation of PyVerilator is required.")
+
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
             prefixed_top_name = "%s_%s" % (node.name, node.name)
             # check if needed file exists
